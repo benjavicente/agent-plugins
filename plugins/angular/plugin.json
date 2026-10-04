@@ -1,0 +1,20 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "angular",
+  "version": "0.1.0",
+  "description": "Reusable skills for Angular development",
+  "keywords": ["angular", "typescript"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Angular",
+        "shortDescription": "Skills for Angular development",
+        "capabilities": [],
+        "defaultPrompt": "Use the Angular skills to review issues with this Angular project",
+        "brandColor": "#DD0031",
+        "composerIcon": "./assets/angular-logo.svg",
+        "logo": "./assets/angular-logo.svg"
+      }
+    }
+  }
+}

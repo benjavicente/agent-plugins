@@ -1,0 +1,17 @@
+{
+  "name": "agent-plugins",
+  "private": true,
+  "description": "A collection of reusable agent plugins.",
+  "scripts": {
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@angular/compiler": "22.2.1",
+    "@angular/core": "22.2.1",
+    "oxfmt": "^0.71.0",
+    "typescript": "~6.0.3"
+  },
+  "packageManager": "pnpm@12.3.4"
+}

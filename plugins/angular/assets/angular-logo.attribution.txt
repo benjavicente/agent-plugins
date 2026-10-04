@@ -1,0 +1,10 @@
+Angular logo
+
+Creator: Angular team / Google
+Source: https://github.com/angular/angular/blob/main/adev/shared-docs/pipeline/tutorials/common/src/assets/angular.svg
+Press kit: https://angular.dev/press-kit
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+License URL: https://creativecommons.org/licenses/by/4.0/
+
+Modifications: Horizontal padding was added to provide a square 236 x 236
+viewBox. The logo artwork is unchanged.
