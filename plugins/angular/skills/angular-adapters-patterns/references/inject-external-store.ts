@@ -1,3 +1,4 @@
+// Assumes Angular 20.1 or later.
 import {
   DestroyRef,
   assertInInjectionContext,
@@ -56,10 +57,9 @@ export function injectExternalStore<T>(
   const invalidate = () => untracked(() => revision.update((n) => n + 1));
 
   effect((onCleanup) => {
-    const current = requested();
-
     // The previous subscription's cleanup may have destroyed the owner.
     if (owner.destroyed) return;
+    const current = requested();
 
     outsideZone(() =>
       untracked(() => {

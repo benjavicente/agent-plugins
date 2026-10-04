@@ -1,3 +1,4 @@
+// Assumes Angular 20.1 or later.
 import { NgZone, assertInInjectionContext, inject } from "@angular/core";
 
 export function injectOutsideZone(): <T>(fn: () => T) => T {

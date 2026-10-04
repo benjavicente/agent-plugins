@@ -2,5 +2,14 @@
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
   "printWidth": 100,
   "tabWidth": 2,
+  "overrides": [
+    {
+      "files": ["**/*.md", "**/*.markdown", "**/*.mdx"],
+      "options": {
+        "printWidth": 80,
+        "proseWrap": "always"
+      }
+    }
+  ],
   "ignorePatterns": ["**/assets/**/*", "pnpm-lock.yaml"]
 }
