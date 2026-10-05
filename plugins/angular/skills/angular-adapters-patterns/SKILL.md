@@ -220,6 +220,9 @@ reviewable.
   or scoped defaults (the nearest provider wins); use
   `provideEnvironmentInitializer` only for work that must run in an injection
   context at initialization. `providers`
+- `[correctness]` Take a client factory and call it from `useFactory`, not a
+  constructed instance; an instance built in app config is shared across SSR
+  requests. `provider-factory`
 - `[design]` Target Angular's LTS window; raise the minimum when it simplifies
   the adapter. The references assume Angular 20.1 or later. `version-support`
 - `[design]` Use `#private` fields in classes. `private-fields`

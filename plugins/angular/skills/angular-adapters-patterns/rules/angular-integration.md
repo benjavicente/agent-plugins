@@ -2,8 +2,8 @@
 
 Contents: [Choose effects](#choose-effects) · [Errors](#errors) ·
 [State vs events](#state-vs-events) · [Hydration](#hydration) ·
-[Providers](#providers) · [Version support](#version-support) ·
-[Private fields](#private-fields)
+[Providers](#providers) · [Provider factory](#provider-factory) ·
+[Version support](#version-support) · [Private fields](#private-fields)
 
 ## Choose effects
 
@@ -143,6 +143,52 @@ TransferState serialization; values and factories do not need it. It returns
 `EnvironmentProviders`, which component `providers` cannot accept, so keep
 scoped providers to plain `Provider[]`. Utilities without shared state need no
 provider.
+
+## Provider factory
+
+`[correctness]` Accept a factory for an app-level client, not a constructed
+instance. Call it from `useFactory`, which runs once per injector in an
+injection context, so the factory can call `inject()` itself.
+
+**Incorrect (the instance is built when the provider list is defined):**
+
+```ts
+export function provideClient(client: Client): EnvironmentProviders {
+  return makeEnvironmentProviders([{ provide: Client, useValue: client }]);
+}
+
+// app.config.ts
+export const appConfig = { providers: [provideClient(new Client())] };
+```
+
+What breaks: on the server, `app.config.ts` is evaluated once per process, so
+every request bootstraps with the same `Client`. Its cache and serialized state
+leak between requests and users. The value also cannot `inject()` anything;
+passing dependencies in, or a `deps` array, only works around that.
+
+**Correct (a factory runs per injector, in an injection context):**
+
+```ts
+export function provideClient(factory: () => Client): EnvironmentProviders {
+  return makeEnvironmentProviders([
+    { provide: Client, useFactory: factory },
+    provideEnvironmentInitializer(() => {
+      const client = inject(Client);
+      client.mount();
+      inject(DestroyRef).onDestroy(() => client.unmount());
+    }),
+  ]);
+}
+
+// app.config.ts
+export const appConfig = {
+  providers: [provideClient(() => new Client({ http: inject(HttpClient) }))],
+};
+```
+
+Each request's environment injector creates its own `Client`. The initializer is
+also where the [hydration](#hydration) code runs. If the client starts timers,
+run the factory [outside the zone](operations.md#outside-zone).
 
 ## Version support
 
