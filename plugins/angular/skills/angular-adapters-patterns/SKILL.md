@@ -209,6 +209,12 @@ reviewable.
 
 - `[correctness]` Use `effect` for client and server work, `afterRenderEffect`
   for DOM work. `choose-effects`
+- `[design]` Prefer modern APIs: signals, `input()`, `output()`, signal queries,
+  `host`, render callbacks, effects, and `DestroyRef` over decorators and
+  lifecycle hooks such as `ngOnInit`, `ngOnChanges`, and `ngOnDestroy`.
+  `modern-apis`
+- `[design]` Prefer attribute selectors (`button[my-button]`) over custom
+  elements, so the host is the real element. `attribute-selectors`
 - `[correctness]` Leave error handling to the user: expose failures as state or
   operation results, not through `ErrorHandler` or `NgZone.onError`; pair a
   throwing read with a non-throwing guard. `errors`

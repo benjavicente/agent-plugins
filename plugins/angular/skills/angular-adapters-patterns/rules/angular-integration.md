@@ -1,6 +1,7 @@
 # Angular integration
 
-Contents: [Choose effects](#choose-effects) · [Errors](#errors) ·
+Contents: [Choose effects](#choose-effects) · [Modern APIs](#modern-apis) ·
+[Attribute selectors](#attribute-selectors) · [Errors](#errors) ·
 [State vs events](#state-vs-events) · [Hydration](#hydration) ·
 [Providers](#providers) · [Provider factory](#provider-factory) ·
 [Version support](#version-support) · [Private fields](#private-fields)
@@ -13,6 +14,113 @@ effects that should run on both the client and server. Use
 work: it runs only on the client, after normal effects and rendering. Choose
 explicit [render phases](https://angular.dev/guide/signals/effect#render-phases)
 to control the order of DOM reads and writes.
+
+## Modern APIs
+
+`[design]` Prefer Angular's current APIs over the older ones they replace. The
+main reason is composition: `effect`, `afterRenderEffect`, `afterNextRender`,
+`afterEveryRender`, and `DestroyRef` work from any function called in an
+injection context. Setup can therefore be extracted into reusable `inject*`
+helpers, called from a constructor or field initializer, instead of being tied
+to a class's lifecycle hooks or a base class. Signal inputs and queries stay
+class fields, but helpers can take them as arguments. All of these are stable
+within the [version floor](#version-support):
+
+- Signals for state and refs, not Observables or `BehaviorSubject`. Keep
+  Observables for event streams; see [state vs events](#state-vs-events).
+- `output()` instead of `@Output()` with `EventEmitter`: typed, decorator-free,
+  and no RxJS subject behind it.
+- `viewChild`, `viewChildren`, `contentChild`, and `contentChildren` instead of
+  the decorator queries. Results are signals that `computed` and effects track,
+  and the `.required` variants fail loudly instead of being `undefined`; see
+  [defer reads](inputs-and-types.md#defer-reads).
+- The `host` object in the component or directive decorator instead of
+  `@HostBinding` and `@HostListener`: bindings are template expressions in one
+  place.
+- `afterNextRender`, `afterEveryRender`, and `afterRenderEffect` instead of
+  `ngAfterViewInit` or `ngAfterViewChecked` for DOM work. Pick among them and
+  `effect` as in [choose effects](#choose-effects).
+- `input()` and `model()` instead of `@Input()`, and reactive primitives instead
+  of the remaining lifecycle hooks where they cover the job. There is no 1:1
+  mapping; replace what the hook did:
+  - `ngOnChanges` reacting to inputs: read input signals in a `computed`, or in
+    an `effect` for side effects.
+  - `ngOnInit` setup: field initializers or the constructor when nothing reads
+    inputs; a `computed` or `effect` when it does, since inputs are not set yet
+    during construction (see [defer reads](inputs-and-types.md#defer-reads)).
+  - `ngOnDestroy`: `DestroyRef.onDestroy`, or an effect's `onCleanup` for
+    resources that are replaced; see
+    [owner vs effect cleanup](lifecycle.md#owner-vs-effect-cleanup).
+
+**Incorrect (decorators and lifecycle hooks):**
+
+```ts
+@Component({ ... })
+class Menu {
+  @Output() changed = new EventEmitter<number>();
+  @ViewChild("panel") panel?: ElementRef<HTMLElement>;
+  @HostBinding("class.open") open = false;
+
+  ngAfterViewInit() {
+    measure(this.panel!.nativeElement);
+  }
+}
+```
+
+What it costs: the query and host state are not signals, so `computed` and
+effects cannot track them. `ngAfterViewInit` also runs during server rendering,
+where there is no real DOM to measure.
+
+**Correct (signal APIs, `host`, and render callbacks):**
+
+```ts
+@Component({ ..., host: { "[class.open]": "open()" } })
+class Menu {
+  readonly changed = output<number>();
+  readonly panel = viewChild.required<ElementRef<HTMLElement>>("panel");
+  readonly open = signal(false);
+
+  constructor() {
+    afterNextRender(() => measure(this.panel().nativeElement));
+  }
+}
+```
+
+## Attribute selectors
+
+`[design]` For components that wrap or style a native element, prefer an
+attribute selector on that element, such as `button[my-button]`, over a custom
+element such as `my-button`. The host is then the real element: native
+attributes, events, focus, and form behavior apply directly. A custom-element
+host has no semantics and its own default styling, and usage-site attributes
+land on it instead of the inner element, so each one has to be re-declared and
+forwarded. For other elements, an attribute on a `div` or the native tag gives
+the same control of the host without an extra wrapper.
+
+**Incorrect (attributes land on the wrapper, not the button):**
+
+```ts
+@Component({
+  selector: "my-button",
+  template: `<button [disabled]="disabled()"><ng-content /></button>`,
+})
+class MyButton {
+  readonly disabled = input(false);
+}
+
+// <my-button type="button" [disabled]="busy">Cancel</my-button>
+// `type` lands on <my-button>; inside a form, the inner <button> stays "submit".
+// `disabled` works only because it was re-declared as an input and forwarded.
+```
+
+**Correct (the host is the button):**
+
+```ts
+@Component({ selector: "button[my-button]", template: `<ng-content />` })
+class MyButton {}
+
+// <button my-button type="button" [disabled]="busy">Cancel</button>
+```
 
 ## Errors
 
