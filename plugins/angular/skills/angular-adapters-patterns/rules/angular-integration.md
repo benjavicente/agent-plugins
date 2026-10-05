@@ -97,6 +97,15 @@ land on it instead of the inner element, so each one has to be re-declared and
 forwarded. For other elements, an attribute on a `div` or the native tag gives
 the same control of the host without an extra wrapper.
 
+Angular's host handling makes this comfortable.
+[Classes and styles combine](https://angular.dev/guide/templates/binding#css-class-and-style-property-bindings):
+`<button my-button class="wide">` keeps both `wide` and the classes from the
+component's `host`. For the same class or style property, the usage-site binding
+wins over the component's host binding. Other attributes follow Angular's
+[binding collision rules](https://angular.dev/guide/components/host-elements#binding-collisions):
+a dynamic value beats a static one; between two static values the usage site
+wins, and between two dynamic values the component's host binding wins.
+
 **Incorrect (attributes land on the wrapper, not the button):**
 
 ```ts
