@@ -7,17 +7,17 @@ by an effect. Use `DestroyRef` for lifetime resources outside that effect's
 ownership. Callers should not have to release adapter resources themselves.
 
 Effects align acquisition and cleanup with Angular's deferred initialization:
-the effect reads the lazy instance when inputs are available, and cleanup captures
-that instance. A `DestroyRef` callback can run before this initialization, so
-reading a lazy factory there may unexpectedly construct a resource or read an
-unset required input during destruction.
+the effect reads the lazy instance when inputs are available, and cleanup
+captures that instance. A `DestroyRef` callback can run before this
+initialization, so reading a lazy factory there may unexpectedly construct a
+resource or read an unset required input during destruction.
 
 ## No side effects in the reactive graph
 
 `[correctness]` Keep `computed`, `linkedSignal`, binding factories, and snapshot
 readers free of adapter side effects. Do not subscribe, start work, write
-adapter state, acquire tasks, or register cleanup there, even inside `untracked`.
-Inert construction and the documented
+adapter state, acquire tasks, or register cleanup there, even inside
+`untracked`. Inert construction and the documented
 [core-owned bookkeeping exception](options-and-construction.md#lazy-inert-core)
 are permitted.
 
@@ -27,10 +27,24 @@ Neither tracking suppression nor zone isolation establishes resource ownership.
 ## Cleanup acquired resources
 
 `[correctness]` Capture the resource in its owning effect and register cleanup
-there. For an inert instance created by a computed, keep constructor option reads
-untracked so option changes do not recreate or dispose the instance:
+there. For an inert instance created by a computed, keep constructor option
+reads untracked so option changes do not recreate or dispose the instance:
 
 ```ts
+// Incorrect: reading the core records lifecycle state, so ownership depends on
+// read order. Storing `used` in a signal does not change that.
+let used = false;
+const core = computed(() => {
+  used = true;
+  return new InertCore(untracked(options));
+});
+owner.onDestroy(() => {
+  if (used) core().dispose();
+});
+```
+
+```ts
+// Correct: the owning effect captures the instance.
 const core = computed(() => new InertCore(untracked(options)));
 
 effect((onCleanup) => {
@@ -57,8 +71,8 @@ effect((onCleanup) => {
 Construction that starts work or acquires adapter subscriptions belongs in an
 owned effect or imperative boundary, with cleanup established at acquisition.
 
-Keep one owner for a connection. An early pending task does not by itself require
-an early subscription or guarantee per-call callbacks before connection.
+Keep one owner for a connection. An early pending task does not by itself
+require an early subscription or guarantee per-call callbacks before connection.
 Implement early connection only when the requested callback/core contract needs
 it, and share the same cleanup path rather than subscribing twice.
 

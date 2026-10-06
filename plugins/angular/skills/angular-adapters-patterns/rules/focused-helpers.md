@@ -12,8 +12,8 @@ entry points. Split helpers that combine unrelated policies, discover the API
 dynamically, or obscure who owns a resource. Do not make a universal ref builder
 just because several utilities return signals.
 
-Keep helpers absent from the public barrel under `src/utils/`, unless the
-existing package has another established layout. The
+Keep helpers out of the public barrel; follow the package's established layout
+for where they live. The
 [complete store adapter](../references/inject-external-utility.ts) shows option
 composition and operations remaining visible beside a shared bridge.
 

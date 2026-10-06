@@ -13,6 +13,41 @@ signal or `linkedSignal` with subscription results. Selectors executed only in
 notifications run outside Angular tracking and can leave derived state stale.
 
 ```ts
+// Incorrect: the core applies options().select, for example
+// (todos) => todos.filter((todo) => todo.done === showDone()), while notifying.
+const value = linkedSignal(() => core().getResultFor(options()));
+
+effect((onCleanup) => {
+  const current = core();
+  onCleanup(current.subscribe((result) => value.set(result)));
+});
+```
+
+What breaks: `select` runs during notification, outside any reactive context, so
+the signals it reads are not tracked. If `value` last computed before the todos
+loaded, `filter` never called `showDone()`; after a notification sets the loaded
+list, toggling `showDone()` leaves `value` stale until the store notifies again.
+
+The correct technique bumps a revision and re-reads in a tracked computation:
+
+```ts
+const revision = signal(0);
+const invalidate = () => revision.update((n) => n + 1);
+
+effect((onCleanup) => {
+  const current = core();
+  untracked(() => onCleanup(current.subscribe(invalidate)));
+});
+
+const value = computed(() => {
+  revision();
+  return core().getResultFor(options());
+});
+```
+
+The reference bridge packages it; adapters use it like this:
+
+```ts
 const snapshot = injectExternalStore(() => {
   const current = core();
   return {
@@ -36,7 +71,9 @@ snapshot to re-read; see [defer reads](inputs-and-types.md#defer-reads).
 `[correctness]` If the core can compute a result for supplied options, pass
 current resolved options into that read so changes appear before the options
 effect runs. Otherwise document that state changes after options are applied.
-Keep `setOptions` in the imperative boundary, not inside `getSnapshot`.
+`setOptions` is a side effect, so it stays in the effect or imperative boundary
+and out of the reactive graph, including `getSnapshot`; see
+[no side effects in the reactive graph](lifecycle.md#no-side-effects-in-the-reactive-graph).
 
 ## Close setup gap
 
@@ -60,10 +97,18 @@ path unless another tracked dependency invalidates it.
 
 ## Direct invalidation
 
-`[design]` Notify Angular directly and let its scheduling coalesce re-reads.
-Do not copy another framework's batching or wrap `notify` in the core's delayed
+`[design]` Notify Angular directly and let its scheduling coalesce re-reads. Do
+not copy another framework's batching or wrap `notify` in the core's delayed
 scheduler without a required contract: reads before that scheduler flushes would
-still see the previous cached snapshot.
+still see the previous cached snapshot. This matters most when the library's
+other framework adapters do not use that scheduler either.
+
+```ts
+// Incorrect: reads return the previous snapshot until the library flushes.
+subscribe: (notify) => current.subscribe(scheduler.batchCalls(notify)),
+// Correct: invalidate directly; Angular schedules the re-read.
+subscribe: (notify) => current.subscribe(notify),
+```
 
 Keep adapter invalidation private to the bridge. If an imperative transition
 changes state without a core notification, first use the core's notification

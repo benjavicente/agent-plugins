@@ -3,8 +3,8 @@
 ## Defer reads
 
 `[correctness]` Do not evaluate required inputs or view queries during utility
-setup or by accessing the returned ref. Use lazy computations for readable
-state and render callbacks for DOM-dependent setup.
+setup or by accessing the returned ref. Use lazy computations for readable state
+and render callbacks for DOM-dependent setup.
 
 ```ts
 class CounterComponent {
@@ -23,11 +23,23 @@ invokes the signal before its required input is set still gets the input error.
 For view-query-dependent DOM work, defer to `afterRenderEffect`:
 
 ```ts
+// Incorrect: setup reads the query, which throws before the view renders.
+function injectHeightTooEarly(element: () => HTMLElement) {
+  const height = signal(element().getBoundingClientRect().height);
+  new ResizeObserver(() =>
+    height.set(element().getBoundingClientRect().height),
+  ).observe(element());
+  return height.asReadonly();
+}
+
+// Correct: the query and the DOM are read only after render.
 function injectHeight(element: () => HTMLElement): Signal<number | undefined> {
   const height = signal<number | undefined>(undefined);
   afterRenderEffect((onCleanup) => {
     const el = element();
-    const observer = new ResizeObserver(() => height.set(el.getBoundingClientRect().height));
+    const observer = new ResizeObserver(() =>
+      height.set(el.getBoundingClientRect().height),
+    );
     observer.observe(el);
     onCleanup(() => observer.disconnect());
   });
@@ -42,16 +54,36 @@ Render callbacks also keep DOM access off the server.
 ## Value or function
 
 `[design]` Accept `T | (() => T)` when static values are common and the forms
-are unambiguous. Normalize inside a lazy `computed`.
+are unambiguous. Normalize inside a lazy `computed`:
 
-Do not use `typeof value === "function"` when `T` can itself be a callback:
-it cannot distinguish the value from a factory returning that value.
+```ts
+function injectExample(value: number | (() => number)) {
+  return computed(() => (typeof value === "function" ? value() : value));
+}
+```
+
+Do not use `typeof value === "function"` when `T` can itself be a callback: it
+cannot distinguish the value from a factory returning that value.
 
 ## Loose in, strong out
 
 `[design]` Accept reactive arguments as `() => T`, rather than requiring
-`Signal<T>`. Return real `Signal<T>` values. A caller can pass
-`() => a() + b()` directly without creating an intermediate computed.
+`Signal<T>`. Return real `Signal<T>` values. A caller can pass `() => a() + b()`
+directly without creating an intermediate computed.
+
+```ts
+// Incorrect
+function injectExample(value: Signal<number>): () => number {
+  return computed(() => value() + 1);
+}
+result = injectExample(computed(() => a() + b()));
+
+// Correct
+function injectExample(value: () => number): Signal<number> {
+  return computed(() => value() + 1);
+}
+result = injectExample(() => a() + b());
+```
 
 ## Honest types
 
@@ -60,8 +92,22 @@ unavailable initial value or cast a default selector result to a caller-chosen
 type. Use identity and selected-result overloads where their contracts differ:
 
 ```ts
+// Incorrect: value() is typed T but is undefined until set, and
+// injectSelected<State, { count: number }>(state) compiles yet returns {}.
+const value = signal(undefined as unknown as T);
+function injectSelected<S, R = S>(
+  state: () => S,
+  select: (state: S) => R = () => ({}) as R,
+): Signal<R>;
+```
+
+```ts
+// Correct
 function injectSelected<S>(state: () => S): Signal<S>;
-function injectSelected<S, R>(state: () => S, select: (state: S) => R): Signal<R>;
+function injectSelected<S, R>(
+  state: () => S,
+  select: (state: S) => R,
+): Signal<R>;
 
 const pendingValue = signal<Result | undefined>(undefined);
 ```

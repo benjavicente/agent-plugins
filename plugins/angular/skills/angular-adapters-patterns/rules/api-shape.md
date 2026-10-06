@@ -2,17 +2,18 @@
 
 ## File naming
 
-`[design]` Follow the [Angular style guide](https://angular.dev/style-guide)
-and established sibling layout. Name public utilities `inject-<utility>.ts`,
-provider functions `providers.ts` or `provide-<utility>.ts`, and keep helpers
-absent from the public barrel under `src/utils/` unless the package has an
-established alternative. A module export alone does not make a helper public.
+`[design]` Follow the [Angular style guide](https://angular.dev/style-guide) and
+established sibling layout. Name public utilities `inject-<utility>.ts` and
+provider functions `providers.ts` or `provide-<utility>.ts`. Keep helpers out of
+the public barrel; a module export alone does not make a helper public.
 
 For components with separate template and style files, retain
 `{name}.component.{ts,html,css}` names (or the project's stylesheet extension).
 The `.component.html` suffix lets formatters such as Prettier and oxfmt select
 the Angular template parser instead of treating Angular control flow as plain
-HTML. This is an intentional naming exception to the style guide.
+HTML. oxfmt has no per-file parser override
+([oxc#17852](https://github.com/oxc-project/oxc/issues/17852)), so this cannot
+be configured away. This is an intentional naming exception to the style guide.
 
 ## Utility prefix
 
@@ -23,14 +24,20 @@ injector arguments and setup diagnostics.
 ## Implicit injector
 
 `[design]` Prefer using the current injection context instead of accepting an
-explicit injector argument. Callers can use `runInInjectionContext` when choosing
-another owner.
+explicit injector argument. Callers can use `runInInjectionContext` when
+choosing another owner.
+
+This differs from Angular APIs such as `effect`, `toSignal`, `resource`,
+`httpResource`, and `afterNextRender`, which accept `{ injector }`. Utilities
+keep one signature instead: an injector parameter tends to hide which context
+owns the utility's lifetime and complicates the implementation.
 
 ## Context diagnostics
 
 `[design]` Use a removable development assertion when it makes setup errors more
 useful. A direct `inject()` call already enforces the injection context; absence
-of an extra assertion does not establish incorrect ownership or runtime behavior.
+of an extra assertion does not establish incorrect ownership or runtime
+behavior.
 
 ```ts
 if (typeof ngDevMode === "undefined" || ngDevMode) {
@@ -67,14 +74,50 @@ return {
 };
 ```
 
-This lets field initializers compose utilities by passing `other.value` unread.
-Passing `other.value()` still reads too early.
+This lets field initializers compose utilities by passing a field unread:
+
+```ts
+@Component({ ... })
+class PriceComponent {
+  amount = input.required<number>();
+
+  // Works: the input is passed unread.
+  total = injectMultiply(this.amount);
+  // Breaks with the Proxy ref: `this.total.value` evaluates the snapshot, which
+  // reads `amount()` before inputs are set. With declared fields it works.
+  doubled = injectMultiply(this.total.value);
+}
+```
+
+Calling it, as in `injectMultiply(this.total.value())`, still reads too early.
 
 ## Named fields
 
 `[design]` Use a named ref rather than a tuple for multiple outputs. Angular
 callers typically store it in a class field: `menu = injectMenu()`, then
 `menu.open()` and `menu.toggle()`. Tuples force indexed access or extra aliases.
+React and Solid return tuples like `[value, setValue]` because callers
+destructure them in a function body; class fields cannot be destructured.
+
+```ts
+// Incorrect: templates read toggle[0](), and reordering silently changes callers.
+function injectToggle(initial = false): [Signal<boolean>, () => void] {
+  const open = signal(initial);
+  return [open.asReadonly(), () => open.update((value) => !value)];
+}
+
+// Correct: names survive at the access site, e.g. menu.open().
+function injectToggle(initial = false) {
+  const open = signal(initial);
+  return {
+    open: open.asReadonly(),
+    toggle: () => open.update((value) => !value),
+  };
+}
+```
+
+When a sibling adapter returns a tuple, map it to named fields; that is an
+Angular difference [sibling concepts](#sibling-concepts) allows.
 
 A single-output utility with no operations may return `Signal<T>` directly.
 Array-valued state and internal tuples are also fine; this rule concerns a
@@ -85,9 +128,16 @@ Keep aggregate snapshots internal unless the requested public API includes one.
 ## Known fields
 
 `[design]` Use [signalFields](../references/signal-fields.ts) when several
-utilities repeat the same field mapping. Supply an explicit state-field list
-and define operations separately. For a small ref, direct `computed` fields are
+utilities repeat the same field mapping. Supply an explicit state-field list and
+define operations separately. For a small ref, direct `computed` fields are
 equally clear; the helper is not mandatory.
+
+```ts
+return {
+  ...signalFields(snapshot, ["value", "status"]),
+  next,
+};
+```
 
 ## Explicit operations
 
@@ -96,6 +146,13 @@ Reading state must not manufacture methods tied to an old snapshot. Do not
 forward core operation fields through the state-field mapper.
 
 ```ts
+// Incorrect: each snapshot creates a new reload bound to that snapshot.
+const state = computed(() => {
+  const result = snapshot();
+  return { ...result, reload: () => result.reload() };
+});
+
+// Correct: one method, defined once.
 const reload = () =>
   untracked(() => {
     const current = core();
@@ -124,10 +181,14 @@ options rather than accepting them silently.
 ## Options factory
 
 `[design]` Accept reactive options as one factory, for example
-`() => ({ wait: delay() })`, instead of requiring getter-property objects.
-Accept static options too when that fits or is ergonomic in the API;
-normalize both lazily as in
-[options and construction](options-and-construction.md).
+`() => ({ wait: delay() })`, instead of requiring getter-property objects
+(`{ get wait() { … } }`). This follows Angular's own options APIs, such as
+[`httpResource(() => ({ url, … }))`](https://angular.dev/api/common/http/httpResource)
+and [`resource({ params: () => … })`](https://angular.dev/api/core/resource).
+Accept static options too when that fits or is ergonomic in the API; normalize
+both lazily as in [options and construction](options-and-construction.md).
 
-Return individual signals for the existing common state fields. This changes
+Return individual signals for the existing common state fields, as
+[ResourceRef](https://angular.dev/api/core/ResourceRef) and Signal Forms'
+[FieldState](https://angular.dev/api/forms/signals/FieldState) do. This changes
 how those fields are read, not which fields the adapter exposes.

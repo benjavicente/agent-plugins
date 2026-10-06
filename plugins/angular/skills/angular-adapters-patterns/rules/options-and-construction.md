@@ -7,6 +7,15 @@ path. Creating the ref must not evaluate a factory that reads required inputs.
 Do not inspect descriptors or build separate reactive and static protocols.
 
 ```ts
+// Incorrect: setup calls the factory, which throws if it reads a required
+// input, and the two paths drift when a default is added to only one.
+const initial = typeof options === "function" ? options() : options;
+const resolved =
+  typeof options === "function"
+    ? computed(() => ({ ...defaults, ...options() }))
+    : signal({ ...defaults, ...initial });
+
+// Correct: one lazy computed for both kinds; nothing is read during setup.
 const supplied = computed(() =>
   typeof options === "function" ? options() : options,
 );
@@ -30,6 +39,14 @@ in a lazy `computed`, with constructor reads untracked. Apply subsequent options
 in an effect. This avoids eager input reads and recreation on option changes:
 
 ```ts
+// Incorrect: the node tracks options, so it re-runs on every change while the
+// cache hides that; the core keeps whatever options existed on first read.
+let instance: Core | undefined;
+const core = computed(() => (instance ||= new Core(resolved())));
+```
+
+```ts
+// Correct: construct once, untracked; an effect applies later options.
 const core = computed(() => new Core(untracked(resolved)));
 
 effect(() => {
@@ -77,6 +94,19 @@ Add writable overrides only if that contract needs them. If imperative changes
 must reset when supplied options change, `linkedSignal` can model that behavior;
 persistent overrides represent a different contract. Neither is a default
 adapter pattern.
+
+```ts
+const resolvedOptions = linkedSignal(() => ({ step: 1, ...wrappedOptions() }));
+
+setOptions: (update) => {
+  resolvedOptions.update((previous) => ({ ...previous, ...update }));
+  core().setOptions(resolvedOptions());
+},
+```
+
+When `wrappedOptions()` changes, the `linkedSignal` recomputes from it and drops
+earlier explicit updates. Run the method untracked and
+[outside the zone](operations.md#outside-zone) like other operations.
 
 The [complete store adapter](../references/inject-external-utility.ts) follows
 reactive supplied options without a public update method. Its internal
