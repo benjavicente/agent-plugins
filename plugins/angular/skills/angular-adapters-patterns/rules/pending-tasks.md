@@ -2,7 +2,12 @@
 
 ## What to await
 
-`[correctness]` Register work Angular must await for rendering or stability.
+`[correctness]` Register work Angular must await for test stability and SSR.
+Pending tasks let tests using `fixture.whenStable()` wait for relevant adapter
+work, and let SSR wait before serializing the rendered application. Without
+ownership, tests may assert before results arrive and SSR may emit unfinished
+state, even when later signal writes correctly update a browser view.
+
 This includes work started by subscriptions or option changes, not only public
 operations. A queued synchronous callback can count; an idle instance or
 subscription alone does not.

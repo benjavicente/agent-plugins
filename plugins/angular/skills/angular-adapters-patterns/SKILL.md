@@ -158,8 +158,8 @@ zone-based core scheduling; the complete TypeScript references include it.
 ### Pending tasks — [rules/pending-tasks.md](rules/pending-tasks.md)
 
 - `[correctness]` [What to await](rules/pending-tasks.md#what-to-await): account
-  for work Angular must await, including automatic work from options or
-  subscriptions; idle instances do not count.
+  for work Angular must await for test stability and SSR, including automatic
+  work from options or subscriptions; idle instances do not count.
 - `[design]` [Use the helper](rules/pending-tasks.md#use-the-helper): centralize
   task release and owner cleanup with `injectPendingTask`; use `set` for observed
   pending state or `run` for one invocation while preserving results/errors.
