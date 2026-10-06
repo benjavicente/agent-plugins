@@ -1,5 +1,5 @@
 // Assumes Angular 20.1 or later.
-import { assertInInjectionContext, computed, effect, signal, untracked } from "@angular/core";
+import { assertInInjectionContext, computed, effect, untracked } from "@angular/core";
 import type { Signal } from "@angular/core";
 import { injectExternalStore } from "./inject-external-store.js";
 import { injectOutsideZone } from "./inject-outside-zone.js";
@@ -18,6 +18,7 @@ class CounterStore {
     this.#options = options;
   }
 
+  // Core update protocol; the Angular ref does not expose a public setter.
   setOptions(options: Options): void {
     this.#options = options;
   }
@@ -41,7 +42,6 @@ class CounterStore {
 
 interface UtilityRef {
   readonly value: Signal<number>;
-  setOptions(options: Partial<Options>): void;
   next(): void;
 }
 
@@ -54,12 +54,13 @@ export function injectExternalUtility(
     assertInInjectionContext(injectExternalUtility);
   }
   const outsideZone = injectOutsideZone();
-  // Normalize supplied options; keep their composition visible below.
+  // Supplied options are the public configuration path; no imperative overrides.
   const wrappedOptions = computed(() => (typeof options === "function" ? options() : options));
-  const overrides = signal<Partial<Options>>({});
-  const resolvedOptions = computed(() => ({ step: 1, ...wrappedOptions(), ...overrides() }));
+  const resolvedOptions = computed(() => ({ step: 1, ...wrappedOptions() }));
   // Initialize lazily through the reactive graph, without tracking options.
-  const instance = computed(() => new CounterStore(untracked(resolvedOptions)));
+  const instance = computed(() =>
+    outsideZone(() => untracked(() => new CounterStore(resolvedOptions()))),
+  );
 
   // Apply changing options to the existing instance through an effect.
   effect(() => {
@@ -80,13 +81,6 @@ export function injectExternalUtility(
 
   return {
     value: snapshot,
-    setOptions: (update) =>
-      outsideZone(() =>
-        untracked(() => {
-          overrides.update((previous) => ({ ...previous, ...update }));
-          instance().setOptions(resolvedOptions());
-        }),
-      ),
     next: () =>
       outsideZone(() =>
         untracked(() => {

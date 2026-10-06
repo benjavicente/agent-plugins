@@ -35,6 +35,8 @@ export function injectPendingTask(): PendingTask {
       cleanup?.();
     });
 
+  // set(true) cannot acquire after destruction. set(false) must still release:
+  // an unconditional destroyed guard in set would skip this cleanup.
   owner.onDestroy(() => set(false));
 
   return {

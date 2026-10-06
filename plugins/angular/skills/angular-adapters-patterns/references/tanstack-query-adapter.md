@@ -30,13 +30,13 @@ Also do not copy these, even though they appear in the linked lines:
 - The [base query bridge][bq-store] calls `lifecycle.setPending(false)` in the
   subscribe cleanup and checks `lifecycle.destroyed` in the notify callback.
   That is stability bookkeeping in the subscription, which
-  [store-state-effect](../rules/pending-tasks.md#store-state-effect) rules out.
+  [task helper guidance](../rules/pending-tasks.md#use-the-helper) rules out.
 - `Object.assign(...) as unknown as Create*Result` result casts serve the
   status-narrowing trade-off. Elsewhere they violate
   [honest-types](../rules/inputs-and-types.md#honest-types).
 - The [base query][bq-get] returns `[resultSignal, getObserver] as const`. An
   internal helper may return a tuple; an exported utility's ref may not (see
-  [never-return-an-array](../rules/api-shape.md#never-return-an-array)).
+  [named fields](../rules/api-shape.md#named-fields)).
 - `signalProxy` is a legacy name. It builds an ordinary object, not a `Proxy`;
   see [ordinary-ref](../rules/api-shape.md#ordinary-ref).
 

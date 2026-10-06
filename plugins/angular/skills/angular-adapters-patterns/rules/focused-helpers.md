@@ -1,26 +1,32 @@
 # Focused helpers
 
-Contents: [One responsibility](#one-responsibility) ·
-[Direct return](#direct-return) · [Nodes need consumers](#nodes-need-consumers)
-
 ## One responsibility
 
-`[design]` Give each helper one clear responsibility. Keep option composition
-and explicit operations visible in the utility. A helper that combines
-construction, option overrides, state synchronization, execution, and disposal
-should be split or removed; a long argument list and a broad return object are
-signs to reconsider the abstraction. A helper may map known state fields, but
-should not also build the facade, forward methods, merge options, and own
-disposal.
+`[design]` Share one integration protocol rather than duplicating it per public
+utility. A base observer helper can coherently own lazy construction, current
+options, snapshot bridging, and subscription lifetime. Related utilities often
+share that protocol.
+
+Keep utility-specific options, state-field lists, and operations visible at the
+entry points. Split helpers that combine unrelated policies, discover the API
+dynamically, or obscure who owns a resource. Do not make a universal ref builder
+just because several utilities return signals.
+
+Keep helpers absent from the public barrel under `src/utils/`, unless the
+existing package has another established layout. The
+[complete store adapter](../references/inject-external-utility.ts) shows option
+composition and operations remaining visible beside a shared bridge.
 
 ## Direct return
 
-`[design]` Prefer a direct object return or a simple spread over staged
+`[design]` Return the ref directly or with a simple spread; avoid staged
 assignment and descriptor mutation.
 
 ## Nodes need consumers
 
-`[design]` Use signals for values consumed reactively. Initialization flags such
-as `used` and imperative options history do not become reactive state merely by
-storing them in signals. Reuse existing signals instead of adding pass-through
-computeds. Avoid redundant reactive nodes and duplicate subscriptions.
+`[design]` Use signals for reactively consumed values. Reuse existing signals
+instead of pass-through computeds, and avoid duplicate subscriptions.
+
+An imperative ownership handle or options history need not be a signal. Keep
+such bookkeeping only when a concrete lifecycle contract requires it; do not
+mirror a computed merely to discover whether it was read.

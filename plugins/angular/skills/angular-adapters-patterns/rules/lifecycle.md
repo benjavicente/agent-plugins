@@ -1,55 +1,37 @@
 # Lifecycle and cleanup
 
-Contents: [Owner vs effect cleanup](#owner-vs-effect-cleanup) ·
-[No side effects in the reactive graph](#no-side-effects-in-the-reactive-graph)
-· [Effect captures resource](#effect-captures-resource) ·
-[Destroy disconnects](#destroy-disconnects)
-
 ## Owner vs effect cleanup
 
-`[design]` Use `DestroyRef` for the utility's lifetime and effect cleanup for
-subscriptions that must be replaced when their inputs change. Callers should not
-need to release resources manually.
+`[design]` Prefer effect cleanup for instances and connections read or acquired
+by an effect. Use `DestroyRef` for lifetime resources outside that effect's
+ownership. Callers should not have to release adapter resources themselves.
+
+Effects align acquisition and cleanup with Angular's deferred initialization:
+the effect reads the lazy instance when inputs are available, and cleanup captures
+that instance. A `DestroyRef` callback can run before this initialization, so
+reading a lazy factory there may unexpectedly construct a resource or read an
+unset required input during destruction.
 
 ## No side effects in the reactive graph
 
-`[correctness]` Keep reactive computations, such as `computed` and
-`linkedSignal`, free of side effects. Registering a cleanup callback is a side
-effect, and so are subscribing, starting work, and writing state. Constructing
-an inert core is fine. Never do these while evaluating a computation, even
-inside `untracked`. Register `DestroyRef.onDestroy` during utility setup. For
-resources obtained through the reactive graph, use a separate effect's
-`onCleanup`.
+`[correctness]` Keep `computed`, `linkedSignal`, binding factories, and snapshot
+readers free of adapter side effects. Do not subscribe, start work, write
+adapter state, acquire tasks, or register cleanup there, even inside `untracked`.
+Inert construction and the documented
+[core-owned bookkeeping exception](options-and-construction.md#lazy-inert-core)
+are permitted.
 
-## Effect captures resource
+Register cleanup in the owning effect or imperative acquisition boundary.
+Neither tracking suppression nor zone isolation establishes resource ownership.
 
-`[correctness]` Capture resources in the owning effect's cleanup instead of
-mirroring a computed instance in an `initialized` variable. Establish ownership
-before starting owned work; avoid lifecycle bookkeeping as a side effect of
-computing state.
+## Cleanup acquired resources
 
-**Incorrect (reads record lifecycle state for cleanup):**
-
-```ts
-let used = false;
-const core = computed(() => {
-  used = true;
-  return new Core(untracked(options));
-});
-
-owner.onDestroy(() => {
-  if (used) core().dispose();
-});
-```
-
-What breaks: lifecycle state is written whenever something reads the core, so
-ownership depends on read order, and cleanup needs a flag to avoid building a
-core just to dispose it. Storing `used` in a signal does not change that.
-
-**Correct (the owning effect captures the instance):**
+`[correctness]` Capture the resource in its owning effect and register cleanup
+there. For an inert instance created by a computed, keep constructor option reads
+untracked so option changes do not recreate or dispose the instance:
 
 ```ts
-const core = computed(() => new Core(untracked(options)));
+const core = computed(() => new InertCore(untracked(options)));
 
 effect((onCleanup) => {
   const current = core();
@@ -57,17 +39,36 @@ effect((onCleanup) => {
 });
 ```
 
-This effect reads only `core()`, so option changes, applied in their own effect,
-do not dispose the instance.
+This effect reads only the core identity. Apply changing options in a separate
+effect; disposing the stable instance on each options-effect rerun is incorrect.
+Do not write disposal handles inside the computed or call `core()` from teardown
+to discover what to dispose.
 
-The effect only runs after setup. Operations that start owned work before it has
-run register that work with `DestroyRef` themselves, as
-[own-at-operation](pending-tasks.md#own-at-operation) does for tasks. Otherwise
-an owner destroyed before the first effect run leaves the work undisposed.
+For a connection replaced by an effect, capture its cleanup in that effect:
+
+```ts
+effect((onCleanup) => {
+  const current = core();
+  const disconnect = untracked(() => current.subscribe(invalidate));
+  onCleanup(disconnect);
+});
+```
+
+Construction that starts work or acquires adapter subscriptions belongs in an
+owned effect or imperative boundary, with cleanup established at acquisition.
+
+Keep one owner for a connection. An early pending task does not by itself require
+an early subscription or guarantee per-call callbacks before connection.
+Implement early connection only when the requested callback/core contract needs
+it, and share the same cleanup path rather than subscribing twice.
 
 ## Destroy disconnects
 
-`[design]` Destruction disconnects subscriptions; it does not make the object
-uncallable. Avoid custom destruction errors and teardown flags. Keep normal core
-behavior or use a no-op where appropriate. Only guard against reconnecting
-subscriptions or starting new work owned by a destroyed context.
+`[design]` On destruction, stop observation and release adapter-owned resources
+and pending tasks. This does not imply canceling core work or delivering every
+per-call callback; preserve those core/sibling contracts independently.
+
+Do not add destruction errors, no-op methods, or temporary connections for a new
+post-destruction guarantee. Guard acquisition of Angular-owned resources where
+required. A previously returned computed may remain readable, but disconnection
+alone provides no live external freshness guarantee.

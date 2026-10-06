@@ -1,124 +1,83 @@
-# Options and the core
-
-Contents: [One lazy path](#one-lazy-path) ·
-[Visible precedence](#visible-precedence) · [Lazy inert core](#lazy-inert-core)
-· [Explicit updates](#explicit-updates)
-
-The [full store example](../references/inject-external-utility.ts) shows these
-rules together.
+# Options and construction
 
 ## One lazy path
 
-`[correctness]` Normalize options and defaults in `computed`. If both static
-options and an options factory are supported, normalize them into the same
-computation; a single `typeof options === "function"` check inside that
-`computed` is fine. Do not inspect property descriptors or maintain separate
-reactive and non-reactive paths. Static options and factories must use the same
-lazy initialization path. A ref's signals and methods must exist immediately,
-before any effect runs.
-
-**Incorrect (setup reads the factory, and each kind gets its own path):**
+`[correctness]` Normalize static options and factories through the same lazy
+path. Creating the ref must not evaluate a factory that reads required inputs.
+Do not inspect descriptors or build separate reactive and static protocols.
 
 ```ts
-const initial = typeof options === "function" ? options() : options;
-const core = new Core({ ...defaults, ...initial });
-const resolved =
-  typeof options === "function"
-    ? computed(() => ({ ...defaults, ...options() }))
-    : signal({ ...defaults, ...options });
-```
-
-What breaks: setup calls the factory, so a factory that reads a required input
-throws in a field initializer, before the ref exists. The two paths then drift:
-a new default or an override added to one misses the other.
-
-**Correct (one lazy computed for both kinds):**
-
-```ts
-const wrappedOptions = computed(() =>
+const supplied = computed(() =>
   typeof options === "function" ? options() : options,
 );
-const resolvedOptions = computed(() => ({ ...defaults, ...wrappedOptions() }));
+const resolved = computed(() => ({ ...defaults, ...supplied() }));
 ```
 
-Nothing is read during setup. The core is built from `resolvedOptions` on first
-read, as in [lazy inert core](#lazy-inert-core).
+A single `typeof` branch is appropriate only when a function cannot also be the
+option value; see [value or function](inputs-and-types.md#value-or-function).
 
 ## Visible precedence
 
-`[design]` Keep composition visible: normalize supplied options, then merge
-defaults, supplied options, and any explicit overrides in that order.
+`[design]` Keep option composition visible: built-in defaults, scoped defaults
+if supported, then supplied options. Include explicit overrides only when the
+public contract requires them. Use the core's normalization API when it defines
+defaulting semantics rather than replacing it with an assumed shallow merge.
 
 ## Lazy inert core
 
-`[correctness]` For a core instance whose options can change, use a lazy
-`computed` to construct it with `untracked(options)`. Apply subsequent options
-in an effect, keeping `setOptions` untracked. Avoid manually caching and
-initializing the instance in a `getInstance` function. The constructor should
-not start subscriptions or async work; own those through effects and cleanup.
-
-**Incorrect (a manual cache inside a computed that tracks options):**
+`[design]` For a core whose options change in place, prefer constructing it once
+in a lazy `computed`, with constructor reads untracked. Apply subsequent options
+in an effect. This avoids eager input reads and recreation on option changes:
 
 ```ts
-let instance: Core | undefined;
-const core = computed(() => (instance ||= new Core(options())));
-```
-
-What breaks: the node depends on `options()`, so it re-runs on every option
-change while the cache hides that. The core is built on first read with whatever
-options exist then. If its constructor starts timers or listeners, reading state
-starts work that nothing owns.
-
-**Correct (construct once, untracked; an effect applies later options):**
-
-```ts
-const core = computed(() => new Core(untracked(options)));
+const core = computed(() => new Core(untracked(resolved)));
 
 effect(() => {
   const current = core();
-  const latest = options();
+  const latest = resolved();
   untracked(() => current.setOptions(latest));
 });
 ```
 
-The effect's first run calls `setOptions` with the options the constructor
-already received. `setOptions` must tolerate that identical call without
-starting work; a core that refetches on `setOptions` would otherwise fetch
-twice.
+The effect must read the core identity and resolved options in its tracked part.
+Calling only an accessor that wraps those reads in `untracked` gives the effect
+no dependency on option changes, even if snapshots separately track options.
+
+Use this shape only when construction is inert from the adapter's perspective.
+The constructor must not create adapter subscriptions or start adapter-owned
+work. Inspect what the first and later `setOptions` calls do; an identical call
+is not necessarily inert. If applying options also starts work, account for its
+ownership and pending tasks and avoid redundant calls when the core requires it.
+
+Existing core-owned cache bookkeeping can accompany construction or a
+synchronous snapshot read. Document that exception and follow the core's
+ownership contract. It does not permit adapter signal writes, subscriptions,
+task acquisition, or cleanup registration inside computations. `untracked`
+changes dependency tracking; it does not make side effects pure.
+
+If construction acquires resources the adapter must release immediately, the
+lazy-computed shape alone is insufficient. Acquire them in an owned imperative
+boundary or effect and establish cleanup there. Explain any different lazy
+ownership strategy; prefer it over leaking resources to conform to this example.
+See [cleanup acquired resources](lifecycle.md#cleanup-acquired-resources).
 
 ## Explicit updates
 
-`[correctness]` For explicit updates, update the overrides signal, read resolved
-options, and apply them through the core's options API. Include defaults in that
-resolution:
+`[design]` Prefer changing options through the supplied options factory. Do not
+add a public `setOptions` or update method when relevant sibling adapters do not
+expose one, unless the task explicitly requires it. A core's internal options
+setter is an integration mechanism, not a reason to expose another public API.
 
-```ts
-const resolvedOptions = computed(() => ({ step: 1, ...wrappedOptions(), ...overrides() }));
+When a public update method is required, route it through resolved options,
+including defaults, and the core's update protocol. Preserve its omission,
+merge, and reset semantics; do not assume an omitted key or `undefined` means
+"restore defaults", or introduce a generic key-diff protocol.
 
-setOptions: (update) => {
-  overrides.update((previous) => ({ ...previous, ...update }));
-  core().setOptions(resolvedOptions());
-},
-```
+Add writable overrides only if that contract needs them. If imperative changes
+must reset when supplied options change, `linkedSignal` can model that behavior;
+persistent overrides represent a different contract. Neither is a default
+adapter pattern.
 
-The [reference](../references/inject-external-utility.ts) also runs this
-untracked and outside the zone. Omission and reset behavior is
-library-dependent: how overrides interact with omitted or `undefined` options
-depends on how the core manages its options. Follow its API; do not invent a
-generic key-diff protocol that assumes `undefined` restores defaults.
-
-When explicit updates should only last until the options given to the utility
-change, hold the resolved options in a `linkedSignal` instead of a separate
-overrides signal:
-
-```ts
-const resolvedOptions = linkedSignal(() => ({ step: 1, ...wrappedOptions() }));
-
-setOptions: (update) => {
-  resolvedOptions.update((previous) => ({ ...previous, ...update }));
-  core().setOptions(resolvedOptions());
-},
-```
-
-When `wrappedOptions()` changes, the `linkedSignal` recomputes from it and drops
-earlier explicit updates.
+The [complete store adapter](../references/inject-external-utility.ts) follows
+reactive supplied options without a public update method. Its internal
+`core.setOptions` calls synchronize the core in an effect and before operations.

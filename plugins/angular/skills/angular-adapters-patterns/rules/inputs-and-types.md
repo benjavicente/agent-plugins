@@ -1,151 +1,67 @@
 # Inputs and types
 
-Contents: [Defer reads](#defer-reads) · [Value or function](#value-or-function)
-· [Loose in, strong out](#loose-in-strong-out) · [Honest types](#honest-types)
-
 ## Defer reads
 
-`[correctness]` Required input and view query signals throw if read before their
-values are available.
-
-### From the utility side
+`[correctness]` Do not evaluate required inputs or view queries during utility
+setup or by accessing the returned ref. Use lazy computations for readable
+state and render callbacks for DOM-dependent setup.
 
 ```ts
-// Given
-@Component({ ... })
-class ExampleComponent {
-  element = viewChild.required<ElementRef<HTMLButtonElement>>("element");
-  rect = injectBoundingRect(() => this.element().nativeElement);
+class CounterComponent {
+  readonly amount = input.required<number>();
+  readonly total = injectTotal(this.amount); // pass the function unread
+  // injectTotal(this.amount()) would read before the input is available.
 }
 
-// Incorrect: both initialization and subscription setup read the query too early.
-function injectBoundingRectTooEarly(element: () => HTMLElement) {
-  const rect = signal(element().getBoundingClientRect());
-
-  const observer = new ResizeObserver(() => {
-    const newRect = element().getBoundingClientRect();
-    rect.set(newRect);
-  });
-  observer.observe(element());
-
-  return rect.asReadonly();
+function injectTotal(amount: () => number): Signal<number> {
+  return computed(() => amount() * 2);
 }
+```
 
-// Correct: the query and the DOM are read only after render.
-function injectBoundingRect(element: () => HTMLElement): Signal<DOMRect | undefined> {
-  const rect = signal<DOMRect | undefined>(undefined);
+A lazy computation does not itself make an early read safe. A caller that
+invokes the signal before its required input is set still gets the input error.
+For view-query-dependent DOM work, defer to `afterRenderEffect`:
 
+```ts
+function injectHeight(element: () => HTMLElement): Signal<number | undefined> {
+  const height = signal<number | undefined>(undefined);
   afterRenderEffect((onCleanup) => {
     const el = element();
-    const observer = new ResizeObserver(() => rect.set(el.getBoundingClientRect()));
+    const observer = new ResizeObserver(() => height.set(el.getBoundingClientRect().height));
     observer.observe(el);
     onCleanup(() => observer.disconnect());
   });
-
-  return rect.asReadonly();
+  return height.asReadonly();
 }
 ```
 
-`rect` is `undefined` until the first measurement, and the type says so.
-`ResizeObserver` fires only on size changes, so `x` and `y` go stale when the
-element moves or the page scrolls; a real utility may return only the size. The
-layout read happens after render instead of inside the reactive graph, and on
-the server `afterRenderEffect` never runs, so nothing touches the emulated DOM.
-Setting `rect` from the observer callback is fine here: DOM measurement is not a
-synchronous store, so there is no tracked `getSnapshot` to defer to (see
-[track-and-invalidate](external-store.md#track-and-invalidate)).
-
-### From the consumer side
-
-```ts
-// Given
-function injectMultiplied(value: () => number, mult: number = 2) {
-  return computed(() => value() * mult);
-}
-
-@Component({ ... })
-class CounterComponent {
-  value = input.required<number>();
-  mult = input.required<number>();
-
-  // Incorrect: calling mult here throws an error.
-  resultThatThrows = injectMultiplied(this.value, this.mult());
-  // Correct: no input signal is called during initialization.
-  resultThatWorks = injectMultiplied(this.value, 2);
-}
-```
-
-If the multiplier must also work with input signals, rework that argument to
-accept a function instead.
+The type includes the unmeasured value. This callback-owned measurement is not
+an external synchronous store, so copying measurements into a signal is valid.
+Render callbacks also keep DOM access off the server.
 
 ## Value or function
 
-`[design]` If it is more ergonomic to accept a value instead of a signal in most
-cases, accept both:
+`[design]` Accept `T | (() => T)` when static values are common and the forms
+are unambiguous. Normalize inside a lazy `computed`.
 
-```ts
-function injectExample(value: number | (() => number)) {
-  const wrappedValue = computed(() =>
-    typeof value === "function" ? value() : value,
-  );
-  return wrappedValue;
-}
-```
-
-Do not use this union when `T` can itself be a function, such as a callback:
-`typeof value === "function"` cannot tell a callback passed as the value from a
-function that returns one.
+Do not use `typeof value === "function"` when `T` can itself be a callback:
+it cannot distinguish the value from a factory returning that value.
 
 ## Loose in, strong out
 
-`[design]` When defining an API, prefer loosely typed functions (`() => T`) for
-arguments and strongly typed signals for return values. This allows the utility
-to be called without an intermediate computed signal.
-
-```ts
-// Incorrect
-function injectExample(value: Signal<number>): () => number {
-  return computed(() => value() + 1);
-}
-result = injectExample(computed(() => a() + b()));
-
-// Correct
-function injectExample(value: () => number): Signal<number> {
-  return computed(() => value() + 1);
-}
-result = injectExample(() => a() + b());
-```
+`[design]` Accept reactive arguments as `() => T`, rather than requiring
+`Signal<T>`. Return real `Signal<T>` values. A caller can pass
+`() => a() + b()` directly without creating an intermediate computed.
 
 ## Honest types
 
-`[correctness]` Return types must describe actual values. Do not cast away an
-unavailable initial value or cast a default selector result to an arbitrary
-caller-chosen type.
-
-**Incorrect (casts promise values that do not exist):**
+`[correctness]` Describe every reachable runtime value. Do not cast away an
+unavailable initial value or cast a default selector result to a caller-chosen
+type. Use identity and selected-result overloads where their contracts differ:
 
 ```ts
-const value = signal(undefined as unknown as T);
-
-function injectSelected<S, R = S>(
-  state: () => S,
-  select: (state: S) => R = () => ({}) as R,
-): Signal<R>;
-```
-
-What breaks: `value()` is typed `T` but returns `undefined` until something sets
-it. `injectSelected<State, { count: number }>(state)` compiles and returns `{}`,
-with no `count`.
-
-**Correct (defer the read, or describe the missing value):**
-
-```ts
-const value = computed(() => read(source()));
-const maybeValue = signal<T | undefined>(undefined);
-
 function injectSelected<S>(state: () => S): Signal<S>;
-function injectSelected<S, R>(
-  state: () => S,
-  select: (state: S) => R,
-): Signal<R>;
+function injectSelected<S, R>(state: () => S, select: (state: S) => R): Signal<R>;
+
+const pendingValue = signal<Result | undefined>(undefined);
 ```
